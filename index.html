@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>飞机肆虐背后：谣言、作弊与理性失守</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --text-color: #c9d1d9;
+            --highlight: #f0f6fc;
+            
+            /* 五轨专属颜色 */
+            --c-blue: #00C5FF;
+            --c-blueair: #58a6ff;
+            --c-official: #f2cc60;
+            --c-greenair: #7ee787;
+            --c-green: #03DC03;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background-color: #0d1117; color: var(--text-color);
+            overflow: hidden; /* 禁止原生全局滚动 */
+        }
+
+        #app {
+            display: flex; width: 100vw; height: 100vh; height: 100dvh;
+            position: relative;
+        }
+
+        /* ================= 左侧：纵向交互时序图 ================= */
+        #left-pane {
+            width: 40%; height: 100%; background: transparent;
+            border-right: 1px solid rgba(255,255,255,0.1);
+            display: flex; flex-direction: column;
+            position: relative; z-index: 10;
+            backdrop-filter: blur(2px);
+        }
+        #timeline-pane {
+            height: 35vh; flex-shrink: 0; position: relative;
+            order: 2;
+            display: flex; flex-direction: column;
+        }
+        #content-pane {
+            height: 65vh; flex-shrink: 0; position: relative; overflow: hidden;
+            background: transparent; border-bottom: 1px solid rgba(255,255,255,0.1);
+            order: 1;
+        }
+        
+        .seq-header {
+            display: flex; height: 70px; flex-shrink: 0;
+            background: rgba(10, 13, 18, 0.95); backdrop-filter: blur(10px);
+            border-top: 1px solid rgba(255,255,255,0.1); z-index: 50;
+        }
+        
+        .seq-col {
+            position: absolute; transform: translateX(-50%);
+            text-align: center; font-size: 0.9rem; font-weight: bold;
+            display: flex; flex-direction: column; justify-content: center; height: 100%;
+        }
+
+        .seq-body {
+            position: relative; padding-top: 20px; padding-bottom: 30px;
+            background-image:
+                repeating-linear-gradient(to bottom, #30363d 0, #30363d 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #30363d 0, #30363d 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #30363d 0, #30363d 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #30363d 0, #30363d 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #30363d 0, #30363d 10px, transparent 10px, transparent 20px);
+            background-size: 2px 20px;
+            background-position: calc(10% - 1px) 0, calc(30% - 1px) 0, calc(50% - 1px) 0, calc(70% - 1px) 0, calc(90% - 1px) 0;
+            background-repeat: repeat-y;
+        }
+
+        /* 生命线（已改用 seq-body background 实现，保留元素但隐藏） */
+        .lifeline { display: none; }
+
+        /* 时序块 (对应每一个PPT) */
+        .seq-block {
+            position: relative; padding: 20px 0; opacity: 0.25; filter: grayscale(0.8);
+            transition: all 0.5s ease; width: 100%;
+        }
+        .seq-block.active {
+            opacity: 1; filter: grayscale(0);
+        }
+
+        .seq-time-label {
+            width: 100%; text-align: center; font-size: 0.9rem; font-weight: bold;
+            color: #8b949e; margin-bottom: 15px; position: relative; z-index: 10;
+        }
+        .seq-block.active .seq-time-label { color: var(--highlight); }
+
+        /* 交互连线行 */
+        .seq-row { position: relative; height: 60px; width: 100%; }
+
+        /* 交互箭头 */
+        .arrow {
+            position: absolute; height: 2px; background: currentColor;
+            display: flex; align-items: flex-end; justify-content: center; z-index: 5;
+            top: 50%;
+        }
+        .arrow.ltr::after {
+            content: ''; position: absolute; right: -2px; top: -5px;
+            border: 6px solid transparent; border-left-color: currentColor;
+        }
+        .arrow.rtl::after {
+            content: ''; position: absolute; left: -2px; top: -5px;
+            border: 6px solid transparent; border-right-color: currentColor;
+        }
+        .arrow-label {
+            position: absolute; bottom: 6px; font-size: 0.75rem; font-weight: bold;
+            white-space: nowrap; background: #0a0d12; padding: 2px 6px; border-radius: 4px;
+        }
+
+        /* 自身动作节点 (Self Event) */
+        .self-event {
+            position: absolute; width: 100px; transform: translate(-50%, -50%); top: 50%;
+            text-align: center; border: 1px solid currentColor; background: rgba(0,0,0,0.9);
+            padding: 6px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: bold; z-index: 6;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+        }
+
+        /* 颜色助手类 */
+        .c-blue { color: var(--c-blue); }
+        .c-blueair { color: var(--c-blueair); }
+        .c-official { color: var(--c-official); }
+        .c-greenair { color: var(--c-greenair); }
+        .c-green { color: var(--c-green); }
+
+        /* ================= 右侧：Leaflet 战术地图（全屏底层）================= */
+        #map {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+        }
+        /* 自定义文字标签：赛博朋克透明发光字 */
+        .tactical-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #e0f0ff;
+            font-family: 'Microsoft YaHei', sans-serif;
+            font-weight: bold;
+            font-size: 12px;
+            text-shadow: 0 0 6px #000, 0 0 8px rgba(0,197,255,0.8);
+            white-space: nowrap;
+            padding: 0 2px !important;
+        }
+        .tactical-label::before { display: none; }
+
+        /* 封面比分浮层 */
+        .score-hud {
+            background: rgba(10, 13, 18, 0.88);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 12px;
+            padding: 9px 18px 7px;
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+            font-family: 'Segoe UI','Microsoft YaHei',sans-serif;
+            white-space: nowrap;
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+        }
+        .sh-row   { display: flex; align-items: center; gap: 10px; }
+        .sh-green { color: #03DC03; font-weight: bold; font-size: 1rem; }
+        .sh-blue  { color: #00C5FF; font-weight: bold; font-size: 1rem; }
+        .sh-score { color: #f0f6fc; font-size: 1.6rem; font-weight: bold; letter-spacing: 5px; }
+        .sh-sub   { text-align: center; color: #8b949e; font-size: 0.72rem; margin-top: 2px; }
+
+        /* 日期HUD：桌面端显示在面板右侧底部 */
+        /* 点击播放提示 HUD */
+        #anim-hint {
+            position: absolute;
+            top: 10px; right: 10px;
+            z-index: 1001;
+            background: rgba(10, 13, 18, 0.80);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-family: 'Microsoft YaHei', sans-serif;
+            font-size: 0.78rem;
+            color: #c9d1d9;
+            backdrop-filter: blur(6px);
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+        #anim-hint.hidden { opacity: 0; }
+        #anim-hint .ah-icon { margin-right: 4px; }
+        body.light #anim-hint { background: rgba(255,255,255,0.88); color: #24292f; border-color: rgba(0,0,0,0.15); }
+        /* 移动端：anim-hint 保持右上角定位，字号略小 */
+        @media (max-width: 768px) {
+            #anim-hint {
+                font-size: 0.72rem;
+                padding: 4px 10px;
+            }
+            #anim-hint.hidden { opacity: 0; }
+        }
+
+        /* 浅色模式地图标签 */
+        body.light .tactical-label {
+            color: #1a1a2e !important;
+            text-shadow: 0 0 4px #fff, 0 0 6px rgba(255,255,255,0.9) !important;
+        }
+
+        .slide {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            padding: 16px 7% 10px; box-sizing: border-box;
+            display: flex; flex-direction: column; justify-content: flex-start;
+            transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.8s;
+            opacity: 0;
+            background: transparent;
+            overflow: hidden;
+        }
+        body.light .slide { background: transparent; }
+        
+        /* 纵向翻页状态核心逻辑 */
+        .slide.past { transform: translateY(-100%); opacity: 0.3; } /* 滑过的页面在上方 */
+        .slide.active { transform: translateY(0); opacity: 1; z-index: 10; } /* 当前页面在正中 */
+        .slide.future { transform: translateY(100%); opacity: 0; } /* 未来的页面在下方 */
+        
+        h1 { font-size: 2.5rem; color: var(--highlight); margin-bottom: 0.4rem; line-height: 1.2; }
+        h2 { font-size: 2rem; color: #8b949e; border-bottom: none; padding-bottom: 0; margin-bottom: 0; margin-top: 0; flex: 1; min-width: 0; }
+        .slide-nav-row { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #30363d; padding-bottom: 6px; margin-bottom: 10px; }
+        .slide-nav-btn { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 1.1rem; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; transition: color 0.2s, background 0.2s; line-height: 1; }
+        .slide-nav-btn:hover { color: var(--highlight); background: rgba(255,255,255,0.08); }
+        .slide-nav-btn.glow-next { color: #ff4444; background: none !important; border: none !important; box-shadow: none !important; animation: glowPulse 1.6s ease-in-out infinite; }
+        .slide-nav-btn.glow-next:hover { color: #ff6666; animation: none; }
+        @keyframes glowPulse { 0%,100% { text-shadow: 0 0 4px rgba(255,60,60,0.5); } 50% { text-shadow: 0 0 18px rgba(255,60,60,1), 0 0 8px rgba(255,60,60,0.8); } }
+        body.light .slide-nav-row { border-bottom-color: rgba(0,0,0,0.15); }
+        body.light .slide-nav-btn { color: #57606a; }
+        body.light .slide-nav-btn:hover { color: var(--highlight); background: rgba(0,0,0,0.06); }
+        p, li { font-size: 1rem; line-height: 1.55; margin-bottom: 8px; }
+        .quote {
+            font-style: italic; border-left: 3px solid #8b949e;
+            color: #8b949e; background: rgba(255,255,255,0.05); padding: 0.55em 0.85em;
+            border-radius: 0 8px 8px 0; margin-top: 0.6em; font-size: 0.82em;
+            font-weight: bold;
+        }
+
+        /* ================= 事件数据表格 ================= */
+        .event-table { width:100%; border-collapse:collapse; font-size:0.92em; margin-bottom:6px; }
+        .event-table th { color:#8b949e; font-weight:600; border-bottom:1px solid #30363d; padding:3px 5px; text-align:left; }
+        .event-table td { padding:3px 5px; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:top; }
+        .event-table td:first-child { white-space:nowrap; }
+        /* D-2: 时间|账号|行动 — 账号列不换行，行动列吃满宽度 */
+        .d2-table td:nth-child(2) { white-space:nowrap; }
+        .d2-table td:last-child { width:99%; }
+        /* D0下午: 时间|事件|结果 — 结果列不换行，事件列吃满宽度 */
+        .d0-table td:nth-child(2) { width:99%; }
+        .d0-table td:last-child { white-space:nowrap; }
+        .event-table tr:last-child td { border-bottom:none; }
+        body.light .event-table th { border-bottom-color:rgba(0,0,0,0.15); }
+        body.light .event-table td { border-bottom-color:rgba(0,0,0,0.06); }
+
+        /* ================= 地图据点弹窗 ================= */
+        /* ================= 地图图片浮层 ================= */
+        #map-img-popup {
+            display: none; position: fixed; z-index: 500;
+            background: rgba(13,17,23,0.92); border: 1px solid rgba(0,197,255,0.3);
+            border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.75);
+            padding: 10px; pointer-events: auto;
+        }
+        #map-img-popup.show { display: block; }
+        #map-img-popup .mip-media-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: nowrap; }
+        #map-img-popup img { max-width: 100%; border-radius: 6px; display: block; }
+        #map-img-popup video { border-radius: 6px; display: none; background: #000; object-fit: contain; max-width: 100%; }
+        #map-img-popup .mip-caption { font-size: 0.78rem; color: #8b949e; margin-top: 6px; text-align: left; line-height: 1.7; }
+        #map-img-popup .mip-caption a { color: #58a6ff; text-decoration: underline; text-underline-offset: 2px; }
+        #map-img-popup .mip-caption a:hover { color: #79c0ff; }
+        #map-img-popup .mip-close {
+            position: absolute; top: 5px; right: 9px; color: #8b949e;
+            cursor: pointer; font-size: 1.2rem; line-height: 1; user-select: none;
+        }
+        #map-img-popup .mip-close:hover { color: #fff; }
+        body.light #map-img-popup { background: rgba(255,255,255,0.96); border-color: rgba(5,80,174,0.2); }
+
+        #map-report-btn {
+            display: none; position: fixed; z-index: 450;
+            transform: translate(-50%, -50%);
+            background: rgba(0,120,212,0.92); color: #fff;
+            border: 1.5px solid rgba(0,197,255,0.55); border-radius: 10px;
+            padding: 14px 28px; font-size: 1.05rem; font-weight: 600;
+            cursor: pointer; text-decoration: none;
+            box-shadow: 0 4px 22px rgba(0,120,212,0.45);
+            letter-spacing: 0.03em; transition: background 0.18s, box-shadow 0.18s;
+        }
+        #map-report-btn:hover { background: rgba(0,150,255,0.98); box-shadow: 0 6px 28px rgba(0,197,255,0.55); }
+        #map-report-btn.show { display: flex; flex-direction: column; align-items: center; text-align: center; }
+        body.light #map-report-btn { background: rgba(5,80,174,0.90); border-color: rgba(5,80,174,0.4); }
+
+        .leaflet-popup-content-wrapper { background:rgba(13,17,23,0.93)!important; color:#c9d1d9!important; border:1px solid rgba(0,197,255,0.3)!important; border-radius:8px!important; box-shadow:0 4px 16px rgba(0,0,0,0.6)!important; }
+        .leaflet-popup-tip { background:rgba(13,17,23,0.93)!important; }
+        .leaflet-popup-close-button { color:#8b949e!important; }
+        body.light .leaflet-popup-content-wrapper { background:rgba(255,255,255,0.95)!important; color:#24292f!important; border-color:rgba(5,80,174,0.2)!important; }
+        body.light .leaflet-popup-tip { background:rgba(255,255,255,0.95)!important; }
+        .leaflet-popup-content { margin:10px 14px!important; min-width:120px; }
+        .portal-popup-title { font-weight:bold; font-size:0.92em; margin-bottom:4px; color:var(--highlight); }
+        .portal-popup-status { font-size:0.8em; margin:2px 0 4px; }
+        .portal-popup-desc { font-size:0.78em; color:#8b949e; line-height:1.45; }
+        .portal-popup-event { display:flex; flex-direction:column; margin:5px 0 2px; border-left:2px solid currentColor; padding-left:6px; font-size:0.8em; line-height:1.5; }
+        .ppe-label { font-weight:600; }
+        .ppe-agent { opacity:0.72; font-size:0.9em; }
+        .portal-popup-links { margin-top:5px; display:flex; flex-direction:column; gap:2px; font-size:0.78em; opacity:0.88; }
+        .ppl-item { padding:1px 0; }
+
+        /* ================= 瀑布流图片墙样式 ================= */
+        /* ================= 进度提示与分页点 ================= */
+        .pagination {
+            position: fixed; right: 24px; top: 50%; transform: translateY(-50%);
+            display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 200;
+        }
+        .dot {
+            width: 15px; height: 15px; border-radius: 50%; background: rgba(255,255,255,0.2);
+            cursor: pointer; transition: all 0.3s ease;
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.08);
+        }
+        .dot.active { background: var(--highlight); transform: scale(1.3); }
+        .nav-arrow {
+            width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: rgba(255,255,255,0.35); font-size: 1rem; border-radius: 50%;
+            transition: color 0.2s, background 0.2s; user-select: none;
+        }
+        .nav-arrow:hover { color: #fff; background: rgba(255,255,255,0.12); }
+        .nav-arrow.disabled { opacity: 0.15; pointer-events: none; }
+
+        /* ── 回到首页按钮 ── */
+        #btn-back-home {
+            position: absolute; bottom: 14px; right: 14px;
+            display: none;
+            align-items: center; gap: 6px;
+            background: rgba(0,197,255,0.12); color: rgba(0,197,255,0.9);
+            border: 1px solid rgba(0,197,255,0.35); border-radius: 8px;
+            padding: 7px 14px; font-size: 0.82rem; font-weight: 600;
+            cursor: pointer; user-select: none; z-index: 20;
+            transition: background 0.18s, color 0.18s, border-color 0.18s;
+        }
+        #btn-back-home:hover { background: rgba(0,197,255,0.25); color: #fff; border-color: rgba(0,197,255,0.7); }
+        #btn-back-home svg { flex-shrink: 0; }
+        body.light #btn-back-home { background: rgba(5,80,174,0.10); color: rgba(5,80,174,0.9); border-color: rgba(5,80,174,0.3); }
+        body.light #btn-back-home:hover { background: rgba(5,80,174,0.22); color: #0550ae; }
+
+        /* ================= 特工操作标注 ================= */
+        @keyframes agentLabelIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes linkIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        .link-anim { animation: linkIn 3s ease forwards; }
+        .agent-label {
+            display: flex; flex-direction: column;
+            background: rgba(13,17,23,0.88);
+            border-left: 2px solid currentColor;
+            border-radius: 0 4px 4px 0;
+            padding: 2px 6px;
+            font-size: 0.68rem;
+            white-space: nowrap;
+            pointer-events: none;
+            line-height: 1.4;
+            animation: agentLabelIn 3s ease forwards;
+            max-width: 170px;
+        }
+        .agent-label.enl { color: #03DC03; }
+        .agent-label.res { color: #00C5FF; }
+        .agent-label.special { color: #ffa500; border-color: #ffa500; }
+        .al-time { font-size: 0.63rem; opacity: 0.75; }
+        .al-agent { font-weight: 600; }
+        body.light .agent-label { background: rgba(255,255,255,0.93); }
+        
+        .nav-hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; color: #6e7681; font-size: 0.72rem; z-index: 100; pointer-events: none; }
+
+        /* ================= 明暗模式切换 ================= */
+        #theme-toggle {
+            position: fixed; top: 14px; right: 20px; z-index: 200;
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+            color: var(--text-color); padding: 6px 14px; border-radius: 20px;
+            cursor: pointer; font-size: 0.85rem; backdrop-filter: blur(8px);
+            transition: background 0.3s, color 0.3s, border-color 0.3s;
+            user-select: none;
+        }
+        #theme-toggle:hover { background: rgba(255,255,255,0.18); }
+        body.light { --bg-color: #f6f8fa; --text-color: #24292f; --highlight: #0d1117; }
+        body.light #left-pane { background: transparent; border-right-color: rgba(0,0,0,0.1); }
+        body.light .seq-header { background: rgba(234,238,242,0.95); border-top-color: rgba(0,0,0,0.1); }
+        body.light .arrow-label { background: #eaeef2; }
+        body.light .self-event { background: rgba(255,255,255,0.95); }
+        body.light .lifeline { display: none; }
+        body.light .seq-body {
+            background-image:
+                repeating-linear-gradient(to bottom, #adb3b9 0, #adb3b9 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #adb3b9 0, #adb3b9 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #adb3b9 0, #adb3b9 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #adb3b9 0, #adb3b9 10px, transparent 10px, transparent 20px),
+                repeating-linear-gradient(to bottom, #adb3b9 0, #adb3b9 10px, transparent 10px, transparent 20px);
+        }
+        body.light #theme-toggle { background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); }
+        body.light #theme-toggle:hover { background: rgba(0,0,0,0.12); }
+        /* 隐藏Leaflet版权声明 */
+        .leaflet-control-attribution { display: none !important; }
+        /* 消除瓦片拼接缝隙（亚像素白色方格线） */
+        .leaflet-tile {
+            outline: none;
+            image-rendering: auto;
+            margin: -1px;
+            padding: 1px;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        .leaflet-tile-container {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        .leaflet-layer { will-change: transform; }
+
+        /* ================= 移动端布局 ================= */
+        @media (max-width: 768px) {
+            #app { flex-direction: column; align-items: flex-end; justify-content: flex-end; }
+            #left-pane {
+                width: 100%; height: 58vh; height: 58dvh;
+                border-right: none;
+                border-top: 1px solid rgba(255,255,255,0.15);
+                position: relative; z-index: 10;
+            }
+            #timeline-pane { display: none !important; }
+            #content-pane {
+                height: 100%; flex: 1;
+                border-bottom: none;
+            }
+            h1 { font-size: 1.2rem; }
+            h2 { font-size: 1rem; }
+            p, li { font-size: 0.82rem; }
+            .slide { padding: 12px 5% 8px; display: flex; flex-direction: column; }
+            #theme-toggle { top: 8px; right: 8px; font-size: 0.75rem; padding: 4px 10px; }
+            .pagination { display: none !important; }
+            body.light #left-pane { border-right: none; border-top-color: rgba(0,0,0,0.1); }
+            /* quote 移至 slide 顶部靠右 */
+            .slide .quote {
+                order: -1;
+                align-self: flex-end;
+                max-width: 80%;
+                margin-top: 0;
+                margin-bottom: 0.5em;
+                border-left: none;
+                border-right: 3px solid #8b949e;
+                border-radius: 8px 0 0 8px;
+                text-align: right;
+            }
+
+        }
+
+        /* ================= 行内容高亮联动 ================= */
+        #content-pane .slide ul {
+            list-style: none;
+            padding-left: 0;
+            margin-left: 0;
+        }
+        #content-pane .slide li,
+        #content-pane .slide .event-table tbody tr {
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s, opacity 0.3s;
+            user-select: none;
+            padding-left: 1.4em;
+            position: relative;
+        }
+        /* 不可点击条目：留空占位，保持文字与可点击条目对齐 */
+        #content-pane .slide li:not([data-hi]):not([data-img]):not([data-video])::before {
+            content: "\00a0\00a0";
+            display: inline-block;
+            width: 1.4em;
+            margin-left: -1.4em;
+        }
+        #content-pane .slide li:hover,
+        #content-pane .slide .event-table tbody tr:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        #content-pane .slide li.row-selected,
+        #content-pane .slide .event-table tbody tr.row-selected {
+            background: rgba(0,197,255,0.11);
+            outline: 1px solid rgba(0,197,255,0.4);
+            outline-offset: 2px;
+        }
+        #content-pane .slide.hi-mode li:not(.row-selected),
+        #content-pane .slide.hi-mode .event-table tbody tr:not(.row-selected) {
+            opacity: 0.25;
+        }
+        body.light #content-pane .slide li.row-selected,
+        body.light #content-pane .slide .event-table tbody tr.row-selected {
+            background: rgba(5,80,174,0.09);
+            outline-color: rgba(5,80,174,0.45);
+        }
+
+        /* ── 可点击条目的六边形标记 ── */
+        #content-pane .slide li[data-hi]::before,
+        #content-pane .slide li[data-img]::before,
+        #content-pane .slide li[data-video]::before {
+            content: "⬡ ";
+            color: rgba(0,197,255,0.75);
+            font-size: 0.85em;
+            pointer-events: none;
+            display: inline-block;
+            width: 1.4em;
+            margin-left: -1.4em;
+        }
+        #content-pane .slide .event-table tbody tr[data-hi] > td:first-child::before {
+            content: "⬡ ";
+            color: rgba(0,197,255,0.75);
+            font-size: 0.85em;
+        }
+        body.light #content-pane .slide li[data-hi]::before,
+        body.light #content-pane .slide li[data-img]::before,
+        body.light #content-pane .slide li[data-video]::before,
+        body.light #content-pane .slide .event-table tbody tr[data-hi] > td:first-child::before {
+            color: rgba(5,80,174,0.75);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <!-- 明暗模式切换按钮 -->
+        <button id="theme-toggle" title="切换明/暗模式">🌙 深色</button>
+        <div id="left-pane">
+            <div id="timeline-pane">
+            <div class="seq-body" style="flex:1 1 0; min-height:0; overflow-y:hidden; scroll-behavior:smooth; scrollbar-width:none; -ms-overflow-style:none; position:relative;">
+                <div class="lifeline" style="left: 10%;"></div>
+                <div class="lifeline" style="left: 30%;"></div>
+                <div class="lifeline" style="left: 50%;"></div>
+                <div class="lifeline" style="left: 70%;"></div>
+                <div class="lifeline" style="left: 90%;"></div>
+
+                <div class="seq-block active" id="seq-0">
+                    <div class="seq-time-label">📋 2025.5.31天津碎片战复盘</div>
+                    <div class="seq-row">
+                        <div class="self-event c-official" style="left: 50%;">2025天津<br>碎片战</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-green" style="left: 10%; width: 80%;"><div class="arrow-label">绿军1:0蓝军（5月31日）</div></div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-1">
+                    <div class="seq-time-label">🔴 D-3 · 碎片公布、绿军出击（5月28日）</div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-green" style="left: 50%; width: 40%;"><div class="arrow-label">参与反馈调整初始Po点</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow ltr c-blue" style="left: 10%; width: 40%;"><div class="arrow-label">参与反馈调整初始Po点</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-official" style="left: 50%;">响应反馈<br>移Po至「龟」</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">连夜驱车利用翡翠岛<br>建挡线三角</div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-2">
+                    <div class="seq-time-label">🔴 D-2 · 空战风暴（5月29日）</div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-greenair" style="left: 10%; width: 60%;"><div class="arrow-label">✈ @Nezha5 炸掉Bai Fei广告牌</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow ltr c-blueair" style="left: 30%; width: 40%;"><div class="arrow-label">4架偏蓝飞机轰炸翡翠岛/休息亭</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-blue" style="left: 10%;">探查确认<br>翡翠岛为禁区</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-green" style="left: 10%; width: 80%;"><div class="arrow-label">发文《开飞机很丢人》指向北京蓝军</div></div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-3">
+                    <div class="seq-time-label">🔴 D-1 · 战前拉锯（5月30日）</div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">@MurphyQHD<br>重占翡翠岛</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-blue" style="left: 10%;">@Xyinkl实地<br>确认禁区</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow ltr c-blue" style="left: 10%; width: 40%;"><div class="arrow-label">@AzureCandy 封住翡翠岛北侧</div></div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-4">
+                    <div class="seq-time-label">🔴 D0 · 回旋镖回转时刻（5月31日 上午）</div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">@WilliamsLi<br>11:58攻下「龟」</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-greenair" style="left: 10%; width: 60%;"><div class="arrow-label">@00091 ✈6 12:03 毒绿「警院食堂」</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-blue" style="left: 10%;">3分战略<br>当场崩溃</div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-5">
+                    <div class="seq-time-label">🔴 D0 · 飞机干预碎片之后（5月31日 下午）</div>
+                    <div class="seq-row">
+                        <div class="self-event c-blue" style="left: 10%;">@WG52O<br>12:07重建Block</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">@YuemiCAT<br>~12:59 +1分 🎉</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">隐瞒飞机助攻<br>大肆庆祝</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-official" style="left: 50%;">对干预战局<br>零反应</div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-6">
+                    <div class="seq-time-label">🔴 D1~D13 · 舆论战爆发</div>
+                    <div class="seq-row">
+                        <div class="self-event c-blue" style="left: 10%;">发文复盘<br>公布飞机Log</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-green" style="left: 10%; width: 80%;"><div class="arrow-label">密集发文洗地，19篇无一提及@00091</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-official" style="left: 50%;">持续装死<br>放任蔓延</div>
+                    </div>
+                </div>
+
+                <div class="seq-block" id="seq-7">
+                    <div class="seq-time-label">🔴 D40+ · 官方介入与尾声</div>
+                    <div class="seq-row">
+                        <div class="arrow ltr c-official" style="left: 50%; width: 40%;"><div class="arrow-label">官方删除「翡翠岛」，封禁“岛主”</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="arrow rtl c-official" style="left: 30%; width: 20%;"><div class="arrow-label">封禁4架偏蓝飞机</div></div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-greenair" style="left: 70%;">@Nezha5 @00091<br>仍然存活</div>
+                    </div>
+                </div>
+            </div>
+            <div class="seq-header">
+                <div class="seq-col c-blue" style="left: 10%;">🔵<br>蓝军</div>
+                <div class="seq-col c-blueair" style="left: 30%;">✈️<br>偏蓝飞机</div>
+                <div class="seq-col c-official" style="left: 50%;">🏛<br>官方</div>
+                <div class="seq-col c-greenair" style="left: 70%;">✈️<br>偏绿飞机</div>
+                <div class="seq-col c-green" style="left: 90%;">🟢<br>绿军</div>
+            </div>
+            </div><!-- /#timeline-pane -->
+            <div id="content-pane">
+
+            <div class="slide active">
+                <h1>2025.5.31天津碎片战复盘</h1>
+                <p style="color:var(--highlight);margin-top:0px;font-size:120%;text-align:right;"><a href="https://adexpl.wiki/zh/tjshardsove/report" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-underline-offset:3px;">——《飞机肆虐背后：谣言、作弊与理性失守》</a></p>
+                <ul>
+                    <li><strong>2025年5月31日</strong>，天津滨海新区临港生态公园，Theta系列之天津碎片战落幕。碎片战结果 <span class="c-green">ENL 1 </span> <strong>:</strong> <span class="c-blue">  0 RES</span></li>
+                    <li>本站信源主要来自蓝绿11篇微信公众号战报，地图具体点位可能不完全准确，但示意足以。如有不准确，请联系@Xyinkl修订</li>
+                    <li>说明D代表碎片日，D-3代表碎片前的第三天。D2表示碎片战后第二天</li>
+                    <li>标有 <span style="color:rgba(0,197,255,0.85);font-size:0.9em;">⬡</span> 的条目可点击，在地图上展开详情或高亮关联点位；点击箭头可切换阶段。</li>
+
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-weight:bold; font-size:1.1em;">天津碎片战，是绿葱日报造谣的起点。<br>为“以正视听”，特整理本站。<br>这是一份附图说明，也是一份案例分析。<br>地图上的每一条连线、每一个颜色变化<br>背后都对应着一个有据可查的事实。</p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D-3 · 碎片公布、绿军出击（5月28日）</h2>
+                <ul>
+                    <li data-hi="p:1" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/init.jpg" data-img-caption="碎片Po从「地球仪」迁至「龟」">原NIA选定碎片Po「地球仪」因处在封闭区，经过双方确认，官方把碎片起始Po迁至不远处临港生态公园的Po「龟」。</li>
+                    <li data-hi="p:7,p:8,l:7-8,o:0"><strong>01:46</strong> <span class="c-green">@StarTrailer</span> 夜驾黄骅，从「盐百亭子」连向「翡翠岛」，建立渤海湾西岸战略挡线。</li>
+                    <li data-hi="p:7,p:8,p:14,l:7-8,l:7-14,l:8-14,f:7-8-14,o:1"><strong>03:20</strong> <span class="c-green">@StarTrailer</span> 追加「泊头清真寺配殿」→「翡翠岛」→「盐百亭子」三角封锁，西侧挡线完成闭合。</li>
+                    <li data-hi="p:1"><strong>18:31</strong> <span class="c-green">@evaniik</span> 将「地球仪」炸至残脚，蓝军南向挡线摧毁。</li>
+                    <li data-hi="p:7" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/fcd2.jpg" data-img-caption="翡翠岛——决定碎片走向的关键节点">双方战报均显示，「翡翠岛」是决定本场碎片走向的<strong>关键节点</strong>——这一判断被随后24小时内发生的闹剧彻底证明。</li>
+                    <li data-hi="p:7" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/jyst.jpg" data-img-caption="北绿对翡翠岛评价">点击查看碎片战前北绿对翡翠岛以及翡翠岛被飞机飞掉的评价。</li>
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;">碎片公布当天，北绿星夜出动，山东连翡翠岛。<br>在明知这个PO是禁区的情况下依然疯狂利用。</p><p style="font-size:1.1em;">翡翠岛的重要性此后被所有参与者反复确认。</p></div>
+            </div>
+
+            <div class="slide future slide-tall">
+                <h2>D-2 · 空战风暴（5月29日）</h2>
+                <table class="event-table d2-table">
+                    <thead><tr><th>时间</th><th>账号</th><th>行动</th></tr></thead>
+                    <tbody>
+                    <tr data-hi="p:13,o:0"><td>07:24</td><td><span class="c-green">✈️ @Nezha5</span></td><td>摧毁蓝军战略「Bai Fei广告牌」</td></tr>
+                    <tr data-hi="p:7,o:1"><td>13:48</td><td><span class="c-blue">✈️ @DemolishHome</span></td><td>摧毁绿军战略Po <strong>「翡翠岛」</strong></td></tr>
+                    <tr data-hi="p:9,o:2"><td>14:20</td><td><span class="c-blue">✈️ @SHawnHardy996</span></td><td>摧毁绿军战略Po「休息亭」</td></tr>
+                    <tr data-hi="p:4,p:18,l:4-18,o:3"><td>14:26</td><td><span class="c-green">@lotusy0810</span><br></td><td>从「意义不明的字母」连「德奎桥」，重建挡线</td></tr>
+                    <tr data-hi="p:4,o:4"><td>15:29</td><td><span class="c-blue">✈️ @ingre0000009</span></td><td>摧毁绿军封闭Po「意义不明的字母」（顺带断线）</td></tr>
+                    <tr data-hi="p:11,p:12,l:11-12,o:5"><td>15:44</td><td><span class="c-blue">✈️ @Ai8899</span></td><td>唐山连到博兴建立Block，封堵了双方战略方向</td></tr>
+                    <tr data-hi="p:11,p:16,l:11-16,o:6"><td>17:53</td><td><span class="c-blue">@AzureCandy<br>@lumokato</span><br></td><td>唐山→大连「警院食堂」，封住翡翠岛</td></tr>
+                    </tbody>
+                </table>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;">偏绿飞机1架，偏蓝飞机4架，翡翠岛、休息亭、意义不明的字母相继被毁；绿军当晚发文《打不赢不丢人，开飞机很丢人》，将矛头指向「北京蓝军」。<strong>36小时后，这句话成了回旋镖。</strong></p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D-1 · 战前拉锯（5月30日）</h2>
+                <ul>
+                    <li data-hi="p:4,p:15,l:4-15,o:2">12:57 <span class="c-green">@lotusy0810</span> 从「意义不明的字母」连到「沧州西站」，重建西向封堵挡线。</li>
+                    <li data-hi="p:7,o:0">13:11 <span class="c-green">@MurphyQHD</span> 重新占领「翡翠岛」，绿军试图恢复战前格局。</li>
+                    <li data-hi="p:7,o:1" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/fcd.jpg" data-img-caption="@Xyinkl @PurpleRedRiver 实地探查翡翠岛禁区">13-15时<span class="c-blue">@Xyinkl 与 @PurpleRedRiver</span> 驾车赶赴翡翠岛实地探查，发现该Po位于<strong style="color:#ff5555;">禁区</strong>内，无法进入。</li>
+                    <li data-hi="p:11,p:16,l:11-16,o:3">17:53 <span class="c-blue">@AzureCandy / @lumokato</span> 从唐山射多根 link 至大连「警院食堂」，将重新激活的「翡翠岛」挡在北侧</li>
+                    <li data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/ed.jpg" data-img-caption="绿葱日报 TG 频道截图">绿葱日报 TG 频道当日成立，针对前一日蓝飞机开始了意识流+造谣+嘲讽</li>
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;">蓝军原计划用两根连到「警院食堂」的线围住碎片，找机会从碎片一根射到警院食堂结束战局。「警院食堂」的状态，成为整场战局的命门。</p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D0 · 回旋镖回转时刻（5月31日 上午）</h2>
+                <ul>
+                    <li data-hi="p:0">蓝军9点开始控毒「龟」；10点绿军人数不足，未能夺下。</li>
+                    <li data-hi="p:0,o:0">11:58 <span class="c-green">@WilliamsLi</span> 攻下「龟」，CP1 绿军开始防守。</li>
+                    <li data-hi="p:16,l:10-16,o:1" data-hi-xform="p:16=green,l:10-16=break" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/00091-2.jpg" data-img-caption="@00091 毒绿「警院食堂」——蓝军3分战略当场崩溃"><span style="color:c-blue;font-weight:bold;">12:03 飞机 <span class="c-blue">@00091 </span>出现大连，将蓝军核心战略Po「警院食堂」毒绿。</span><br>
+                    蓝军精心布局的3分战略，在碎片战开局仅3分钟内崩溃。</li>
+                    <li data-hi="p:16" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/00091.jpg" data-img-caption="@00091 身份争议——绿军开飞机 vs 蓝军「战术换防」"><span class="c-blue">@00091 </span>的身份（绿军开飞机 / 蓝军"战术换防"）至今无定论，双方各执一词。</li>
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;">绿军战后19篇文章，<strong>无一提及 @00091</strong>。<br>这个系统性的沉默，是合订本最核心的质疑所在。</p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D0 · 飞机干预碎片之后（5月31日 下午）</h2>
+                <table class="event-table d0-table">
+                    <thead><tr><th>时间</th><th>事件</th><th>结果</th></tr></thead>
+                    <tbody>
+                    <tr data-hi="p:6,p:12,l:6-12,o:0"><td>12:07</td><td><span class="c-blue">@WG52O</span> 博兴→鲨鱼重建南北Block</td><td class="c-blue">蓝军应急</td></tr>
+                    <tr data-hi="p:0,p:2,l:0-2,o:1"><td>~12:59</td><td><span class="c-green">@YuemiCAT</span> 建link，碎片跳4.9km→「仙人球雕塑」</td><td class="c-green">绿军 +1分 </td></tr>
+                    <tr data-hi="p:12"><td>CP3</td><td>蓝军踢→博兴（3分目标）</td><td style="color:#8b949e;">绿军打退</td></tr>
+                    <tr data-hi="p:5"><td>CP4</td><td>绿军踢→大沽口炮台（1分）</td><td style="color:#8b949e;">Po不足L4，失败</td></tr>
+                    <tr data-hi="p:0"><td>CP5</td><td>碎片回「龟」，跳跃&gt;5km</td><td style="color:#8b949e;">不得分</td></tr>
+                    <tr data-hi="p:0"><td>CP6</td><td>碎片短跳&lt;1km</td><td style="color:#8b949e;">不得分</td></tr>
+                    </tbody>
+                </table>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;"><strong>最终：<span >绿军 1:0 蓝军</span></strong>——这1分，是在飞机 @00091 摧毁蓝军战略核心之后才真正成型的。</p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D1~D13 · 舆论战爆发</h2>
+                <ul>
+                    <li><strong>D1</strong>：<span class="c-green">绿军</span>《天津完全胜利》——全文<strong>只字不提 @00091</strong></li>
+                    <li><strong>D1~D3</strong>：<span class="c-green">绿葱日报</span>连发10余篇，矩阵式庆祝——<strong>不提 @00091</strong></li>
+                    <li><strong>D4</strong>：<span class="c-green">@Xana233</span>《天津碎片战报之地面篇》——<strong>不提 @00091</strong></li>
+                    <li><strong>D5</strong>：<span class="c-green">@CLAIRE9</span>《北京车队一日游记》——<strong>不提 @00091</strong></li>
+                    <li><strong>D8</strong>：<span class="c-green">@Spurs7</span>《5.31碎片外围滨州半日游》——<strong>不提 @00091</strong></li>
+                    <li><strong>D10</strong>：<span class="c-green">@XUNMO</span>《天津碎片的真实之战》——<strong>不提 @00091</strong></li>
+                    <li><strong>D11</strong>：<span class="c-blue">@NanoApe</span>《飞机下的罗生门》蓝军正式首次记录<strong>@00091</strong></li>
+                    <li><strong>D13</strong>：<span class="c-green">喝豆汁没漱口</span>《倒果为因》——绿军对上文的反击——<strong>提出“蓝军换防论”</strong></li>
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1.1em;">绿军「飞机庇佑下的胜利不光彩」，在警院食堂被飞的瞬间就成了回旋镖，稳稳扎回了绿军头顶。<br><strong>绿军战后19篇文章，无一提及 @00091。</strong><br>——这不是个体失误，而是系统性的选择性失明。</p></div>
+            </div>
+
+            <div class="slide future">
+                <h2>D40+ · 官方介入与尾声</h2>
+                <ul>
+                    <li data-hi="p:7" data-img="https://xyinkl.oss-cn-beijing.aliyuncs.com/QHD1.jpg" data-video="https://xyinkl.oss-cn-beijing.aliyuncs.com/QHD.MP4" data-caption-html="">7月初：官方删除「翡翠岛」Portal，其维护者<span class="c-green">@MurphyQHD</span>被封禁。</li>
+                    <li>7月7日：4架<span class="c-blue">偏蓝飞机（@DemolishHome / @Ai8899 / @ingre0000009 / @SHawnHardy996）</span><strong>全部坠毁</strong>。</li>
+                    <li ><span class="c-green">偏绿飞机@Nezha5</span>与 <span class="c-blue">@00091</span>仍然存活。</li>
+                    <li>研判：偏蓝飞机坠毁原因多半是7月初「飞机大战」中狂飞滥飞所致，并非直接源于天津碎片。</li>
+                </ul>
+                <div class="quote" style="margin-top:6px;"><p style="font-size:1em;"><strong>在飞机的影响下取得胜利，算不算干净的胜利？</strong><br>明知禁区Po仍利用。最后Po删了、人封了，没个说法？<br>这两个问题，绿军选择了不回答，还选择了报复<br><br>当一个社群的舆论系统无法对本阵营的违规行为<br>进行自我审视时，它就已经彻底沦丧了。<br><br>如果你是一个绿军<br>十分建议多关注一些蓝军频道，兼听则明<br>公平游戏，从了解真相开始。<br></p></div>
+                <button id="btn-back-home" title="回到首页">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L12 4l9 8"/><path d="M9 21V12h6v9"/></svg>
+                    回到首页
+                </button>
+            </div>
+
+            </div><!-- /#content-pane -->
+        </div><!-- /#left-pane -->
+        <div class="pagination" id="pagination">
+            <div id="dots-container" style="display:flex;flex-direction:column;gap:10px;"></div>
+        </div>
+
+        <div id="map"></div>
+        <a id="map-report-btn" href="https://adexpl.wiki/zh/tjshardsove/report" target="_blank" rel="noopener">📖 <br>点击阅读<br>合订本报告</a>
+    </div>
+
+    <div id="map-img-popup">
+        <span class="mip-close" title="关闭">&times;</span>
+        <div class="mip-media-row">
+            <img id="map-img-el" src="" alt="">
+            <video id="map-vid-el" src="" controls autoplay muted playsinline preload="none"></video>
+        </div>
+        <div class="mip-caption" id="map-img-caption"></div>
+    </div>
+
+    <script>
+        // ================= 纵向幻灯片与时序图联动逻辑 =================
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const seqBlocks = document.querySelectorAll('.seq-block');
+        const totalSlides = slides.length;
+        
+        // 生成右侧分页圆点
+        const pagination = document.getElementById('dots-container');
+        slides.forEach((_, index) => {
+            const dot = document.createElement('div');
+            dot.classList.add('dot');
+            if (index === 0) dot.classList.add('active');
+            dot.addEventListener('click', () => {
+                currentSlide = index;
+                updateUI();
+            });
+            pagination.appendChild(dot);
+        });
+        const dots = document.querySelectorAll('.dot');
+
+        function updateNavArrows() {
+            const up = document.getElementById('nav-up');
+            const down = document.getElementById('nav-down');
+            if (up)   up.classList.toggle('disabled', currentSlide === 0);
+            if (down) down.classList.toggle('disabled', currentSlide === totalSlides - 1);
+            // 首页"开始"按钮：停留首页时发光，离开后取消
+            const glowBtn = document.getElementById('slide0-next-btn');
+            if (glowBtn) glowBtn.classList.toggle('glow-next', currentSlide === 0);
+            // 最后一页显示「回到首页」按钮
+            const homeBtn = document.getElementById('btn-back-home');
+            if (homeBtn) homeBtn.style.display = (currentSlide === totalSlides - 1) ? 'flex' : 'none';
+        }
+
+        // 回到首页按钮点击
+        document.getElementById('btn-back-home').addEventListener('click', (e) => {
+            e.stopPropagation();
+            currentSlide = 0;
+            updateUI();
+        });
+
+        function updateUI() {
+            // 1. 更新纵向幻灯片状态
+            slides.forEach((slide, index) => {
+                slide.classList.remove('active', 'past', 'future');
+                if (index < currentSlide) {
+                    slide.classList.add('past'); // 滑上去的
+                } else if (index === currentSlide) {
+                    slide.classList.add('active'); // 当前
+                } else {
+                    slide.classList.add('future'); // 没滑到的在下面
+                }
+            });
+
+            // 2. 更新分页圆点
+            dots.forEach((dot, index) => {
+                dot.classList.toggle('active', index === currentSlide);
+            });
+
+            // 3. 同步左侧时序图的高亮状态
+            seqBlocks.forEach((block, index) => {
+                block.classList.toggle('active', index === currentSlide);
+            });
+
+            // 4. 左侧时序图平滑跟随滚动 (使其垂直居中)
+            const seqBody = document.querySelector('.seq-body');
+            const targetBlock = document.getElementById('seq-' + currentSlide);
+            if (seqBody && targetBlock) {
+                const scrollPos = targetBlock.offsetTop - (seqBody.clientHeight / 2) + (targetBlock.clientHeight / 2);
+                // overflow:hidden 下 scrollTo 无效，直接用 scrollTop
+                seqBody.scrollTop = Math.max(0, scrollPos);
+            }
+
+            // 5. 更新战术地图
+            updateLeafletMap(currentSlide);
+
+            // 6. 重新适配当前 slide 字号（内容变化后重算）
+            fitSlideContent();
+            updateNavArrows();
+        }
+
+        // ================= 纵向滚动控制防抖逻辑 =================
+        let isScrolling = false;
+        function handleScroll(direction) {
+            if (isScrolling) return;
+            
+            let newSlide = currentSlide + direction;
+            if (newSlide >= 0 && newSlide < totalSlides) {
+                currentSlide = newSlide;
+                isScrolling = true;
+                updateUI();
+                setTimeout(() => isScrolling = false, 800); // 锁定800ms防止滚动过快
+            }
+        }
+
+        // 监听鼠标滚轮 (排除地图区域，让 Leaflet 自己处理地图缩放)
+        // 滚轮切换已禁用，改为点击箭头切换
+
+        // 监听键盘上下键、左右键及翻页键
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ' || e.key === 'ArrowRight') {
+                e.preventDefault(); handleScroll(1);
+            } else if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ArrowLeft') {
+                e.preventDefault(); handleScroll(-1);
+            }
+        });
+
+        // ================= 明暗模式切换 =================
+        const themeBtn = document.getElementById('theme-toggle');
+        let isDark = true;
+        const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+        const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+        themeBtn.addEventListener('click', () => {
+            isDark = !isDark;
+            document.body.classList.toggle('light', !isDark);
+            themeBtn.textContent = isDark ? '🌙 深色' : '☀️ 浅色';
+            tileLayer.setUrl(isDark ? TILE_DARK : TILE_LIGHT);
+            updateLeafletMap(currentSlide);
+        });
+
+        // ================= Leaflet 战术地图 =================
+        const ENL_GREEN = '#03DC03';
+        const RES_BLUE  = '#00C5FF';
+        const NEUTRAL_C = '#f2cc60';
+
+        // 真实坐标（19个据点）
+        const GEO_PORTALS = [
+            // ── 天津·碎片区域（临港/滨海）
+            { name: '龟 🐢',           latlng: [38.931285, 117.695426], desc: '碎片刷新点（临港生态公园桥上）；原Po「地球仪」因化工封闭区迁至此' },
+            { name: '地球仪',           latlng: [38.935145, 117.70506], desc: '原公告碎片Po，化工企业楼前封闭区域，后迁至「龟」' },
+            { name: '仙人球雕塑',       latlng: [38.974706, 117.685551], desc: 'D0碎片第2跳落点，距龟约4.9km；@YuemiCAT建link后碎片跳至此，绿军得1分' },
+            { name: '黄苇鳽',           latlng: [38.9980, 117.8880], desc: '最终决战地，临港湿地公园芦苇荡深处；@Neoaves驱蚊液奇效' },
+            { name: '意义不明的字母',   latlng: [39.076558, 117.616666], desc: '绿军战略Po（CNOOC封闭区）；D-2 15:29被偏蓝飞机@ingre0000009摧毁' },
+            { name: '大沽口炮台',       latlng: [38.975908, 117.702112], desc: '蓝军CP4尝试踢碎片至此，因Po等级不足L4失败' },
+            { name: '鲨鱼',             latlng: [39.0595, 117.7421], desc: '东疆湾建设纪念公园；D0 12:07蓝军@WG52O紧急建Block' },
+            // ── 天津外围
+            { name: '翡翠岛 ✝',         latlng: [39.770999, 119.401855], desc: '绿军长期战略Po；D-2 @Xyinkl @PurpleRedRiver实地探查确认禁区；13:48被偏蓝飞机@DemolishHome摧毁；7月官方确认禁区后删除' },
+            { name: '盐百亭子',         latlng: [38.3724, 117.3501], desc: '黄骅港经济开发区；D-3凌晨@StarTrailer建翡翠岛战略链的起始中继点' },
+            { name: '休息亭',           latlng: [38.7420, 117.6830], desc: '绿军战略Po；D-2 14:20被偏蓝飞机@SHawnHardy996摧毁' },
+            { name: '津南小站钻石公园', latlng: [38.8942, 117.2716], desc: '蓝军连接点，唐山方向线' },
+            // ── 河北/山东 外围
+            { name: '唐山',             latlng: [39.6310, 118.1803], desc: '偏蓝飞机@Ai8899活动区；D-2 15:44建唐山→博兴Block同时封堵双方' },
+            { name: '博兴绘画师',       latlng: [37.1548, 118.1095], desc: '山东博兴；蓝军CP3踢碎片目标（3分），@WG52O重建Block守此方向' },
+            { name: 'Bai Fei广告牌',    latlng: [37.1920, 118.0640], desc: '博兴，蓝军战略Po；D-2 07:24被偏绿飞机@Nezha5（✈1）摧毁' },
+            { name: '泊头清真寺配殿',   latlng: [38.0667, 116.5720], desc: '河北泊头；D-3凌晨@StarTrailer建西向挡线的中继节点' },
+            { name: '沧州西站',         latlng: [38.4018, 116.6845], desc: '绿军重建西向挡线端点（@lotusy0810操作）' },
+            // ── 大连·蓝军核心得分目标
+            { name: '警院食堂 🎯',      latlng: [38.8754, 121.5300], desc: '大连，蓝军首轮3分战略核心Po；D0 12:03被绿色飞机@00091毒绿，蓝军战略当场崩溃' },
+            { name: '老铁山',           latlng: [38.7527, 121.1577], desc: '大连，蓝军备用得分方案' },
+            // ── 辽宁
+            { name: '德奎桥',           latlng: [40.6800, 122.2200], desc: '辽宁；@lotusy0810建绿军挡线端点' },
+        ];
+
+        // 每个 stage 对应一张幻灯片（19个据点，6个阶段）
+        const GEO_STAGES = [
+            { // 0: 封面概述
+                dateLabel: '概述',
+                dateSub: '天津碎片战 2025',
+                portals: ['neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral'],
+                links:   [],
+                fields:  [],
+                ops:     [],
+                view: { center:[39.2, 119.0], zoom:7 },
+            },
+            { // 1: D-3 碎片公布，@StarTrailer夜间机动
+                dateLabel: 'D-3',
+                dateSub: '5月28日 · 碎片公布',
+                portals: ['neutral','blue','neutral','neutral','green','blue','blue','green','neutral','green','blue','neutral','blue','blue','neutral','neutral','blue','blue','neutral'],
+                links:   [[8,7,'green'],[14,7,'green'],[14,8,'green']],
+                fields:  [[8,14,7,'green']],
+                ops: [
+                    { portal: 8,  agent: '@StarTrailer', team: 'enl', label: '01:46 建挡线中继' },
+                    { portal: 14, agent: '@StarTrailer', team: 'enl', label: '03:20 闭合三角挡线' },
+                ],
+                view: { center:[38.5, 117.3], zoom:9 },
+            },
+            { // 2: D-2 飞机风暴 — 以挡线初始状态展示，飞机破坏事件为标注
+                dateLabel: 'D-2',
+                dateSub: '5月29日 · 飞机风暴',
+                // 显示 D-2 开局状态：D-3挡线仍完整，翡翠岛/休息亭/意义不明均为绿色
+                // ops 标注当日各架飞机的摧毁顺序
+                portals: ['neutral','blue-w','neutral','neutral','green','blue','blue','green','green','green','blue','neutral','blue','blue','green','neutral','blue','blue','neutral'],
+                //                  0        1         2         3       4       5      6       7        8        9       10      11       12      13      14       15       16      17      18
+                // 7=翡翠岛(green)  8=盐百亭子(green)  9=休息亭(green)  13=Bai Fei(blue，07:24后被毁)  14=泊头(green)
+                links:   [
+                    [8,7,'green'],[14,7,'green'],[14,8,'green'], // D-3挡线三角（仍在）
+                    [9,7,'green'],                               // 休息亭→翡翠岛（绿军挡线延伸）
+                    [4,18,'green'],                              // @lotusy0810 14:26 重建西向挡线
+                    [11,12,'blue'],[11,16,'blue'],               // @Ai8899/AzureCandy 蓝方Block（当日建立）
+                ],
+                fields:  [[8,14,7,'green']],                    // D-3挡线封闭三角场域
+                ops: [
+                    { portal: 13, agent: '✈@Nezha5',       team: 'enl', label: '07:24 毁Bai Fei' },
+                    { portal: 7,  agent: '✈@DemolishHome',  team: 'res', label: '13:48 毁翡翠岛' },
+                    { portal: 9,  agent: '✈@SHawnHardy996', team: 'res', label: '14:20 毁休息亭' },
+                    { portal: 4,  agent: '@lotusy0810',        team: 'enl', label: '14:26 建挡线→德奎桥' },
+                    { portal: 4,  agent: '✈@ingre0000009',  team: 'res', label: '15:29 毁意义不明' },
+                    { portal: 11, agent: '✈@Ai8899',        team: 'res', label: '15:44 唐山Block' },
+                    { portal: 11, agent: '@AzureCandy',        team: 'res', label: '17:53 封北侧' },
+                ],
+                view: { center:[38.5, 119.0], zoom:8 },
+            },
+            { // 2: D-1 战前部署，翡翠岛重建
+                dateLabel: 'D-1',
+                dateSub: '5月30日 · 战前部署',
+                portals: ['blue','neutral','neutral','neutral','green-w','blue','blue','green','neutral','neutral','blue','blue','blue','neutral','neutral','neutral','blue','blue','neutral'],
+                links:   [[11,16,'blue'],[4,15,'green'],[11,12,'blue'],[7,8,'green']],
+                fields:  [],
+                ops: [
+                    { portal: 7,  agent: '@MurphyQHD',             team: 'enl',     label: '13:11 重占翡翠岛' },
+                    { portal: 7,  agent: '@Xyinkl @PurpleRedRiver', team: 'special', label: 'D-1 确认禁区!' },
+                    { portal: 4,  agent: '@lotusy0810',             team: 'enl',     label: '12:57 重建西向挡线' },
+                    { portal: 11, agent: '@AzureCandy',             team: 'res',     label: '17:53 封住翡翠岛北侧' },
+                ],
+                view: { center:[38.8, 118.5], zoom:9 },
+            },
+            { // 3: D0上午 — @00091摧毁蓝军3分战略（12:03转折）
+                dateLabel: 'D0 上午',
+                dateSub: '5月31日 · 战局转折',
+                portals: ['green','neutral','neutral','neutral','green-w','neutral','blue','green','neutral','neutral','blue','blue','blue','neutral','neutral','neutral','blue','blue','neutral'],
+                links:   [[10,16,'blue']],
+                fields:  [],
+                ops: [
+                    { portal: 0,  agent: '@WilliamsLi', team: 'enl', label: '11:58 攻下龟' },
+                    { portal: 16, agent: '✈@00091 ',   team: 'enl', label: '12:03 ⚡毒绿警院' },
+                ],
+                view: { center:[39.2, 119.4], zoom:8 },
+            },
+            { // 4: D0下午 碎片决战全程
+                dateLabel: 'D±0 ⚡',
+                dateSub: '5月31日 · 碎片决战',
+                portals: ['green','neutral','green','green','green','blue-w','blue','green','neutral','neutral','blue','blue','blue','neutral','neutral','neutral','green-w','blue','neutral'],
+                links:   [[12,6,'blue'],[11,17,'blue'],[0,2,'green']],
+                fields:  [],
+                ops: [
+                    { portal: 12, agent: '@WG52O',    team: 'res', label: '12:07 重建Block' },
+                    { portal: 2,  agent: '@YuemiCAT', team: 'enl', label: '~12:59 碎片+1分' },
+                ],
+                view: { center:[39.0, 119.5], zoom:9 },
+            },
+            { // 5: D1~D13 舆论战爆发
+                dateLabel: 'D1 ~ D13',
+                dateSub: '6月1-13日 · 舆论战爆发',
+                portals: ['green','neutral','neutral','neutral','green','neutral','neutral','green','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','green-w','neutral','neutral'],
+                links:   [],
+                fields:  [],
+                view: { center:[39.01, 117.89], zoom:13 },
+            },
+            { // 6: D40+ 官方介入，翡翠岛被删
+                dateLabel: 'D40+',
+                dateSub: '7月 · 官方介入',
+                portals: ['neutral','neutral','neutral','neutral','neutral','neutral','neutral','banned','neutral','neutral','neutral','neutral','neutral','neutral','neutral','neutral','green-w','neutral','neutral'],
+                links:   [],
+                fields:  [],
+                view: { center:[38.7, 118.0], zoom:11 },
+            },
+        ];
+
+        function teamColor(team) {
+            if (team === 'green')   return ENL_GREEN;
+            if (team === 'green-w') return '#7ee787';
+            if (team === 'blue')    return RES_BLUE;
+            if (team === 'blue-w')  return '#58a6ff';
+            if (team === 'banned')  return '#666666';
+            return NEUTRAL_C;
+        }
+
+        const leafMap = L.map('map', { zoomControl: false }).setView([39.2, 118.5], 8);
+        const tileLayer = L.tileLayer(TILE_DARK, {
+            attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/copyright">OSM</a>',
+            subdomains: 'abcd',
+            maxZoom: 19,
+            keepBuffer: 16,          // 视口外多缓存16格瓦片（默认2）
+            updateWhenIdle: false,   // 动画过程中持续加载瓦片
+            updateWhenZooming: true, // 缩放动画时也更新瓦片
+        }).addTo(leafMap);
+
+        const mapLayers = L.layerGroup().addTo(leafMap);
+        let animTimers = [];
+        let _mapMoveend = null;
+
+        // ================= 行高亮联动 =================
+        let _hiLayerMap = {};
+        let _hiActiveRow = null;
+
+        function _dimLayer(layer, dim) {
+            if (!layer) return;
+            if (layer.setStyle) {
+                if (dim) {
+                    if (!layer._hiStash) layer._hiStash = { opacity: layer.options.opacity ?? 0.9, fillOpacity: layer.options.fillOpacity ?? 0.85 };
+                    layer.setStyle({ opacity: 0.07, fillOpacity: 0.03 });
+                } else {
+                    if (layer._hiStash) { layer.setStyle(layer._hiStash); delete layer._hiStash; }
+                }
+                try {
+                    const tt = layer.getTooltip && layer.getTooltip();
+                    if (tt && tt._container) tt._container.style.opacity = dim ? '0.07' : '';
+                } catch(e) {}
+            } else if (layer.getElement && layer.getElement()) {
+                layer.getElement().style.opacity = dim ? '0.08' : '';
+            }
+        }
+
+        function highlightMapElements(hiStr) {
+            const hiKeys = new Set(hiStr.split(',').map(s => s.trim()).filter(Boolean));
+            Object.entries(_hiLayerMap).forEach(([key, layer]) => _dimLayer(layer, !hiKeys.has(key)));
+        }
+
+        function clearMapHighlight() {
+            Object.values(_hiLayerMap).forEach(layer => _dimLayer(layer, false));
+        }
+
+        // ======== data-hi-xform: 点击行时的地图样式变换（颜色/断线）========
+        function applyHiXform(xformStr) {
+            if (!xformStr) return;
+            xformStr.split(',').forEach(token => {
+                token = token.trim();
+                const eqIdx = token.lastIndexOf('=');
+                if (eqIdx < 0) return;
+                const key    = token.slice(0, eqIdx);
+                const action = token.slice(eqIdx + 1);
+                const layer  = _hiLayerMap[key];
+                if (!layer) return;
+                if (action === 'green') {
+                    if (layer.setStyle) {
+                        layer._xformStash = { color: layer.options.color, fillColor: layer.options.fillColor };
+                        layer.setStyle({ color: ENL_GREEN, fillColor: ENL_GREEN });
+                    }
+                } else if (action === 'break') {
+                    if (layer.setStyle) {
+                        layer._xformStash = { color: layer.options.color, dashArray: layer.options.dashArray || null, opacity: layer.options.opacity };
+                        layer.setStyle({ color: '#ff5555', dashArray: '6 5', opacity: 0.65 });
+                    }
+                }
+            });
+        }
+        function revertHiXform() {
+            Object.values(_hiLayerMap).forEach(layer => {
+                if (layer._xformStash) {
+                    if (layer.setStyle) layer.setStyle(layer._xformStash);
+                    delete layer._xformStash;
+                }
+            });
+        }
+
+        // 两线段是否相交（不含端点）——用于动画时自动移除被新连线封堵的旧连线
+        function segmentsIntersect(p1, p2, q1, q2) {
+            const ax = p2[0]-p1[0], ay = p2[1]-p1[1];
+            const bx = q2[0]-q1[0], by = q2[1]-q1[1];
+            const cx = q1[0]-p1[0], cy = q1[1]-p1[1];
+            const denom = ax*by - ay*bx;
+            if (Math.abs(denom) < 1e-12) return false;
+            const t = (cx*by - cy*bx) / denom;
+            const u = (cx*ay - cy*ax) / denom;
+            return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
+        }
+
+        // 用 flyToBounds 将有效点位适配到可视区域（左40%被面板遮挡），确保点位占满70%以上
+        function fitStageToView(bounds) {
+            const isMobile = window.innerWidth <= 768;
+            const W = window.innerWidth;
+            const H = window.innerHeight;
+            if (isMobile) {
+                const panelH = H * 0.45;
+                const visH   = H - panelH;
+                leafMap.flyToBounds(bounds, {
+                    paddingTopLeft:     [W * 0.05, visH * 0.06],
+                    paddingBottomRight: [W * 0.05, panelH + visH * 0.06],
+                    duration: 1.2, easeLinearity: 0.4, maxZoom: 15,
+                });
+            } else {
+                const panelW = W * 0.40;
+                const visW   = W - panelW;
+                leafMap.flyToBounds(bounds, {
+                    paddingTopLeft:     [panelW + visW * 0.06, H * 0.06],
+                    paddingBottomRight: [visW * 0.06,          H * 0.06],
+                    duration: 1.2, easeLinearity: 0.4, maxZoom: 15,
+                });
+            }
+        }
+
+        function updateLeafletMap(idx) {
+            animTimers.forEach(t => clearTimeout(t));
+            animTimers = [];
+            if (_mapMoveend) { leafMap.off('moveend', _mapMoveend); _mapMoveend = null; }
+            leafMap.stop();
+            mapLayers.clearLayers();
+            _hiLayerMap = {};
+
+            // 报告跳转按钮：D1~D13（slide 6）和 D40+（slide 7）时显示
+            (function() {
+                const btn = document.getElementById('map-report-btn');
+                if (!btn) return;
+                const show = (idx === 6 || idx === 7);
+                btn.classList.toggle('show', show);
+                if (show) {
+                    const W = window.innerWidth, H = window.innerHeight;
+                    const isMob = W <= 768;
+                    let cx, cy;
+                    if (isMob) {
+                        const panelH = document.getElementById('left-pane').offsetHeight || H * 0.45;
+                        cx = W / 2; cy = (H - panelH) / 2;
+                    } else {
+                        const panelW = W * 0.40;
+                        cx = panelW + (W - panelW) / 2; cy = H / 2;
+                    }
+                    btn.style.left = cx + 'px';
+                    btn.style.top  = cy + 'px';
+                }
+            })();
+            if (_hiActiveRow) {
+                _hiActiveRow.classList.remove('row-selected');
+                const _s = _hiActiveRow.closest('.slide');
+                if (_s) _s.classList.remove('hi-mode');
+                _hiActiveRow = null;
+            }
+
+            const stage = GEO_STAGES[Math.min(idx, GEO_STAGES.length - 1)];
+
+            // 计算本场景有效点位：非中立 + 连线/场/特工操作涉及的点
+            const activeSet = new Set();
+            stage.portals.forEach((team, i) => { if (team !== 'neutral') activeSet.add(i); });
+            stage.links.forEach(([a, b]) => { activeSet.add(a); activeSet.add(b); });
+            stage.fields.forEach(([a, b, c]) => { activeSet.add(a); activeSet.add(b); activeSet.add(c); });
+            if (stage.ops) stage.ops.forEach(op => activeSet.add(op.portal));
+
+            const stageBounds = activeSet.size
+                ? L.latLngBounds([...activeSet].map(i => GEO_PORTALS[i].latlng))
+                : null;
+
+            // 0. 封面特效：高亮天津滨海新区 + 比分浮层
+            if (idx === 0) {
+                L.circle([39.03, 117.80], {
+                    radius: 22000,
+                    color: '#f0f6fc', fillColor: '#c9d1d9',
+                    fillOpacity: 0.07, weight: 1.5, opacity: 0.45,
+                    dashArray: '8 5',
+                }).addTo(mapLayers);
+                L.marker([39.03, 117.80], {
+                    icon: L.divIcon({
+                        className: '',
+                        html: '<div class="score-hud">' +
+                              '<div class="sh-row"><span class="sh-green">绿军</span><span class="sh-score">1 : 0</span><span class="sh-blue">蓝军</span></div>' +
+                              '<div class="sh-sub">天津滨海新区</div>' +
+                              '<div class="sh-sub">2025.5.31</div>' +
+                              '</div>',
+                        iconAnchor: [80, 35], iconSize: null,
+                    }),
+                    interactive: false, zIndexOffset: 600,
+                }).addTo(mapLayers);
+            }
+
+            // 1. 控制场（立即绘制）
+            stage.fields.forEach(([a, b, c, team]) => {
+                const color = teamColor(team);
+                const poly = L.polygon(
+                    [GEO_PORTALS[a].latlng, GEO_PORTALS[b].latlng, GEO_PORTALS[c].latlng],
+                    { color, fillColor: color, fillOpacity: 0.13, weight: 1.5, opacity: 0.7 }
+                ).addTo(mapLayers);
+                _hiLayerMap['f:' + [a,b,c].sort((x,y)=>x-y).join('-')] = poly;
+            });
+
+            // 2. 据点——只渲染有效点位（跳过中立点）
+            stage.portals.forEach((team, i) => {
+                if (!activeSet.has(i)) return;
+                const color    = teamColor(team);
+                const isBanned = team === 'banned';
+                const isWeak   = team.endsWith('-w');
+                const radius   = isBanned ? 5 : (isWeak ? 6 : 9);
+
+                const marker = L.circleMarker(GEO_PORTALS[i].latlng, {
+                    radius, color, fillColor: color,
+                    fillOpacity: isBanned ? 0.25 : 0.85,
+                    weight: isBanned ? 1 : 2,
+                }).addTo(mapLayers);
+                _hiLayerMap['p:' + i] = marker;
+
+                const labelText = isBanned ? `${GEO_PORTALS[i].name} ✕` : GEO_PORTALS[i].name;
+                marker.bindTooltip(labelText, {
+                    permanent: true, direction: 'right',
+                    className: 'tactical-label', offset: [10, 0],
+                }).openTooltip();
+
+                const teamBadge = { 'green':'🟢 绿军（ENL）','green-w':'🟡 绿军争夺中','blue':'🔵 蓝军（RES）','blue-w':'🔵 蓝军弱化','neutral':'⚪ 中立','banned':'⛔ 已删除/封禁' };
+                // 根据当前 stage 生成强相关 popup 内容
+                const _pOps = (stage.ops || []).filter(op => op.portal === i);
+                const _pLinks = stage.links.filter(([a,b]) => a===i || b===i);
+                let _pH = '<div class="portal-popup-title">' + GEO_PORTALS[i].name + '</div>';
+                if (_pOps.length > 0 || _pLinks.length > 0) {
+                    _pOps.forEach(op => {
+                        const tc = op.team==='enl' ? '#03DC03' : op.team==='res' ? '#00C5FF' : '#ffa500';
+                        _pH += '<div class="portal-popup-event" style="color:' + tc + '">' +
+                            '<span class="ppe-label">' + op.label + '</span>' +
+                            '<span class="ppe-agent">' + op.agent + '</span></div>';
+                    });
+                    if (_pLinks.length > 0) {
+                        _pH += '<div class="portal-popup-links">' +
+                            _pLinks.map(([a,b,t]) => {
+                                const other = a===i ? b : a;
+                                const dir = a===i ? '→\u2009' : '←\u2009';
+                                return '<span class="ppl-item" style="color:' + teamColor(t) + '">' + dir + GEO_PORTALS[other].name + '</span>';
+                            }).join('') + '</div>';
+                    }
+                } else {
+                    _pH += '<div class="portal-popup-status">' + (teamBadge[team] || team) + '</div>';
+                }
+                marker.bindPopup(_pH, { maxWidth: 240 });
+            });
+
+            // 3. 连线 + 特工标注：立即渲染（初始暗化，等待行点击高亮）
+            stage.links.forEach(([a, b, team]) => {
+                const p1 = GEO_PORTALS[a].latlng, p2 = GEO_PORTALS[b].latlng;
+                const pl = L.polyline([p1, p2], {
+                    color: teamColor(team), weight: 2.5, opacity: 0.9,
+                }).addTo(mapLayers);
+                _hiLayerMap['l:' + Math.min(a,b) + '-' + Math.max(a,b)] = pl;
+            });
+            if (stage.ops) {
+                stage.ops.forEach((op, _opIdx) => {
+                    const tc = op.team === 'enl' ? 'enl' : op.team === 'res' ? 'res' : 'special';
+                    const opMkr = L.marker(GEO_PORTALS[op.portal].latlng, {
+                        icon: L.divIcon({
+                            className: '',
+                            html: '<div class="agent-label ' + tc + '">' +
+                                  '<span class="al-time">' + op.label + '</span>' +
+                                  '<span class="al-agent">' + op.agent + '</span>' +
+                                  '</div>',
+                            iconAnchor: [0, 60], iconSize: null,
+                        }),
+                        interactive: false, zIndexOffset: 200,
+                    }).addTo(mapLayers);
+                    _hiLayerMap['o:' + _opIdx] = opMkr;
+                });
+            }
+
+            // 4. 平滑飞移至目标视角（直接 flyToBounds，无中途缩小）
+            if (stageBounds) {
+                fitStageToView(stageBounds);
+            } else if (idx === 0) {
+                // 封面：用 fitStageToView 将视角对准天津滨海新区，并自动补偿左侧面板遮挡
+                fitStageToView(L.latLngBounds([[38.87, 117.42], [39.18, 118.18]]));
+            } else if (stage.view) {
+                leafMap.flyTo(stage.view.center, stage.view.zoom, { duration: 1.5, easeLinearity: 0.35 });
+            }
+
+            // 5. 更新日期HUD
+            // （已移除）
+
+            // 6. 初始暗化所有图层，更新提示HUD可见性
+            const hasAnim = (stage.links && stage.links.length > 0) || (stage.ops && stage.ops.length > 0);
+            const animHint = document.getElementById('anim-hint');
+            if (animHint) animHint.classList.toggle('hidden', !hasAnim);
+            if (hasAnim) {
+                // DOM 稳定后统一暗化：等待用户点击行高亮
+                setTimeout(() => { highlightMapElements(''); }, 50);
+            }
+        }
+
+        // ================= 地图点击：取消行选中，还原暗化 =================
+        leafMap.on('click', () => {
+            if (_hiActiveRow) {
+                _hiActiveRow.classList.remove('row-selected');
+                const _hs = _hiActiveRow.closest('.slide');
+                if (_hs) _hs.classList.remove('hi-mode');
+                _hiActiveRow = null;
+                highlightMapElements('');
+            }
+        });
+
+        // ================= 移动端触屏滑动 =================
+        let touchStartY = 0, touchStartX = 0;
+        const contentPane = document.getElementById('content-pane');
+        contentPane.addEventListener('touchstart', (e) => {
+            touchStartY = e.touches[0].clientY;
+            touchStartX = e.touches[0].clientX;
+        }, { passive: true });
+        contentPane.addEventListener('touchend', (e) => {
+            const dy = touchStartY - e.changedTouches[0].clientY;
+            const dx = touchStartX - e.changedTouches[0].clientX;
+            if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 40) {
+                handleScroll(dy > 0 ? 1 : -1);
+            }
+        }, { passive: true });
+
+        window.addEventListener('resize', () => { leafMap.invalidateSize(); fitSlideContent(); });
+
+        // ================= Slide 内容自动缩放（以D-3为基准，其余页不大于D-3）=================
+        function fitSlideContent() {
+            const pane = document.getElementById('content-pane');
+            if (!pane) return;
+            const paneH = pane.clientHeight;
+            if (!paneH) return;
+            // 第一遍：重置所有页面，测量 D-3 的自然高度
+            document.querySelectorAll('.slide').forEach(slide => {
+                slide.style.fontSize = '';
+                slide.style.paddingTop = '';
+                slide.style.paddingBottom = '';
+            });
+            // D-3 是第二个 slide（index 1）
+            const allSlides = document.querySelectorAll('.slide');
+            const d3Slide = allSlides[1];
+            const d3Ratio = d3Slide ? Math.min(1, paneH / d3Slide.scrollHeight) : 1;
+            // 第二遍：每个页面独立缩放，但不得大于 D-3 的比例
+            allSlides.forEach(slide => {
+                const naturalH = slide.scrollHeight;
+                const ownRatio = naturalH > paneH ? paneH / naturalH : 1;
+                const ratio = Math.min(d3Ratio, ownRatio);
+                if (ratio < 1) {
+                    slide.style.fontSize = (ratio * 100) + '%';
+                    slide.style.paddingTop = Math.floor(16 * ratio) + 'px';
+                    slide.style.paddingBottom = Math.floor(10 * ratio) + 'px';
+                }
+            });
+        }
+        fitSlideContent();
+        if (window.ResizeObserver) {
+            new ResizeObserver(() => fitSlideContent()).observe(document.getElementById('content-pane'));
+        }
+
+        // ================= 行内容高亮点击联动 =================
+
+        // 根据 hiStr 中的 key，飞移地图到高亮元素范围
+        function flyToHighlight(hiStr) {
+            const keys = hiStr.split(',').map(s => s.trim()).filter(Boolean);
+            const hasLink  = keys.some(k => k.startsWith('l:'));
+            const hasField = keys.some(k => k.startsWith('f:'));
+            const isMobile = window.innerWidth <= 768;
+            const W = window.innerWidth, H = window.innerHeight;
+
+            let bounds = null;
+            keys.forEach(k => {
+                const layer = _hiLayerMap[k];
+                if (!layer) return;
+                try {
+                    if (layer.getBounds) {
+                        bounds = bounds ? bounds.extend(layer.getBounds()) : layer.getBounds();
+                    } else if (layer.getLatLng) {
+                        const ll = layer.getLatLng();
+                        bounds = bounds ? bounds.extend(ll) : L.latLngBounds([ll, ll]);
+                    }
+                } catch(e) {}
+            });
+            if (!bounds || !bounds.isValid()) return;
+
+            if (hasLink || hasField) {
+                // link/field：令线条占可视区宽度约70%（左右各留15%）
+                if (isMobile) {
+                    const panelH = document.getElementById('left-pane').offsetHeight || H * 0.45;
+                    const visH   = H - panelH;
+                    leafMap.flyToBounds(bounds, {
+                        paddingTopLeft:     [W * 0.15, visH * 0.08],
+                        paddingBottomRight: [W * 0.15, panelH + visH * 0.08],
+                        duration: 1.0, easeLinearity: 0.5, maxZoom: 15,
+                    });
+                } else {
+                    const panelW = W * 0.40;
+                    const visW   = W - panelW;
+                    leafMap.flyToBounds(bounds, {
+                        paddingTopLeft:     [panelW + visW * 0.15, H * 0.08],
+                        paddingBottomRight: [visW * 0.15,          H * 0.08],
+                        duration: 1.0, easeLinearity: 0.5, maxZoom: 15,
+                    });
+                }
+            } else {
+                // 纯点位：flyTo，将点位放置到可视区域中心
+                const center = bounds.getCenter();
+                const zoom = 10;
+                const centerPx = leafMap.project(center, zoom);
+                let shiftedLatLng;
+                if (isMobile) {
+                    // 面板在下方，可视区高度 visH，中心在 visH/2
+                    // 将飞行目标向下偏移 panelH/2，使点位出现在可视区垂直中心
+                    const panelH = document.getElementById('left-pane').offsetHeight || H * 0.45;
+                    shiftedLatLng = leafMap.unproject(centerPx.add([0, panelH / 2]), zoom);
+                } else {
+                    // 面板在左侧，可视区从 panelW 开始，中心在 panelW + visW/2
+                    // 将飞行目标向左偏移 panelW/2，使点位出现在可视区水平中心
+                    const panelW = W * 0.40;
+                    shiftedLatLng = leafMap.unproject(centerPx.add([-panelW / 2, 0]), zoom);
+                }
+                leafMap.flyTo(shiftedLatLng, zoom, { duration: 0.8, easeLinearity: 0.5 });
+            }
+        }
+
+        // ================= 地图图片浮层 =================
+        function showMapImage(url, caption, videoUrl, captionHtml) {
+            const popup = document.getElementById('map-img-popup');
+            const img   = document.getElementById('map-img-el');
+            const vid   = document.getElementById('map-vid-el');
+            const cap   = document.getElementById('map-img-caption');
+            const hasVideo = !!videoUrl;
+            img.src = url;
+            if (captionHtml) {
+                cap.innerHTML = captionHtml;
+                cap.style.display = 'block';
+            } else {
+                cap.textContent = caption || '';
+                cap.style.display = caption ? 'block' : 'none';
+            }
+            if (hasVideo) {
+                vid.src = videoUrl;
+                vid.style.display = 'block';
+                vid.load();
+                vid.play().catch(() => {});
+            } else {
+                vid.pause && vid.pause();
+                vid.src = '';
+                vid.style.display = 'none';
+            }
+            const W = window.innerWidth, H = window.innerHeight;
+            const isMob = W <= 768;
+            let cx, cy, visW;
+            if (isMob) {
+                const panelH = document.getElementById('left-pane').offsetHeight || H * 0.45;
+                cx = W / 2;
+                cy = (H - panelH) / 2;
+                visW = W;
+            } else {
+                const panelW = W * 0.40;
+                visW = W - panelW;
+                cx = panelW + visW / 2;
+                cy = H / 2;
+            }
+            const visH = isMob ? (H - (document.getElementById('left-pane').offsetHeight || H * 0.45)) : H;
+            const maxImgH = Math.round(visH * 0.85) - 20;
+            if (hasVideo) {
+                // 图+视频并列：各占地图可视宽度 ~30%
+                const itemW = Math.round(visW * 0.30);
+                img.style.width = itemW + 'px';
+                img.style.height = 'auto';
+                img.style.maxWidth = itemW + 'px';
+                img.style.maxHeight = maxImgH + 'px';
+                img.style.objectFit = 'contain';
+                vid.style.width = itemW + 'px';
+                vid.style.maxWidth = itemW + 'px';
+                vid.style.maxHeight = maxImgH + 'px';
+                popup.style.width = (itemW * 2 + 36) + 'px';
+                popup.style.maxWidth = (itemW * 2 + 36) + 'px';
+            } else {
+                const imgW = Math.round(visW * 0.70);
+                img.style.width = 'auto';
+                img.style.height = 'auto';
+                img.style.maxWidth = imgW + 'px';
+                img.style.maxHeight = maxImgH + 'px';
+                img.style.objectFit = 'contain';
+                popup.style.width = 'fit-content';
+                popup.style.maxWidth = (imgW + 20) + 'px';
+            }
+            popup.style.maxHeight = (maxImgH + 60) + 'px';
+            popup.style.left = cx + 'px';
+            popup.style.top  = cy + 'px';
+            popup.style.transform = 'translate(-50%, -50%)';
+            popup.classList.add('show');
+        }
+        function hideMapImage() {
+            const popup = document.getElementById('map-img-popup');
+            popup.classList.remove('show');
+            const vid = document.getElementById('map-vid-el');
+            if (vid) { vid.pause(); vid.src = ''; }
+        }
+        document.querySelector('#map-img-popup .mip-close').addEventListener('click', hideMapImage);
+        document.getElementById('map').addEventListener('click', hideMapImage);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMapImage(); });
+
+        document.getElementById('content-pane').addEventListener('click', (e) => {
+            if (e.target.closest('a, button')) return;
+
+            const activeSlide = document.querySelector('.slide.active');
+
+            // ① data-img / data-video：弹出图片/视频（副作用，不阻止翻页）
+            const imgRow = e.target.closest('[data-img],[data-video]');
+            if (imgRow) {
+                const slide = imgRow.closest('.slide');
+                if (slide && slide.classList.contains('active')) {
+                    showMapImage(imgRow.dataset.img || '', imgRow.dataset.imgCaption || '', imgRow.dataset.video || '', imgRow.dataset.captionHtml || '');
+                }
+            } else {
+                // 点击了非 data-img 区域，关闭已开启的图片弹窗
+                hideMapImage();
+            }
+
+            // ② data-hi：切换地图高亮（副作用，不阻止翻页）
+            const row = e.target.closest('[data-hi]');
+            if (row) {
+                const slide = row.closest('.slide');
+                if (slide && slide.classList.contains('active')) {
+                    if (_hiActiveRow === row) {
+                        row.classList.remove('row-selected');
+                        slide.classList.remove('hi-mode');
+                        revertHiXform();
+                        highlightMapElements('');
+                        _hiActiveRow = null;
+                    } else {
+                        if (_hiActiveRow) {
+                            _hiActiveRow.classList.remove('row-selected');
+                            const ps = _hiActiveRow.closest('.slide');
+                            if (ps) ps.classList.remove('hi-mode');
+                            revertHiXform();
+                        }
+                        row.classList.add('row-selected');
+                        slide.classList.add('hi-mode');
+                        highlightMapElements(row.dataset.hi);
+                        applyHiXform(row.dataset.hiXform);
+                        flyToHighlight(row.dataset.hi);
+                        _hiActiveRow = row;
+                    }
+                }
+            }
+
+            // ③ 翻页：只有点击空白区域（无 data-img/data-video/data-hi）才翻页
+            const isInteractiveRow = e.target.closest('[data-img],[data-video],[data-hi]');
+            if (!isInteractiveRow && !(activeSlide && activeSlide.dataset.noScroll)) handleScroll(1);
+        });
+
+        // ================= Slide 0：首页 h1 右侧注入"开始"发光按钮 =================
+        (function() {
+            const h1 = document.querySelector('.slide h1');
+            if (!h1) return;
+            const wrapper = document.createElement('div');
+            // 把 h1 的 margin-bottom 移到 wrapper，避免 flex 高度计算受 margin 干扰
+            wrapper.style.cssText = 'display:flex;align-items:stretch;gap:10px;margin-bottom:0.4rem;';
+            h1.style.margin = '0';
+            const btn = document.createElement('button');
+            btn.id = 'slide0-next-btn';
+            btn.className = 'slide-nav-btn glow-next';
+            btn.textContent = '❯';
+            // align-self:stretch 让按钮高度跟随 h1；font-size 只决定字符视觉大小，不撑高容器
+            btn.style.cssText = 'font-size:2rem;padding:0 8px;flex-shrink:0;align-self:stretch;display:flex;align-items:center;';
+            btn.addEventListener('click', e => { e.stopPropagation(); handleScroll(1); });
+            h1.parentNode.insertBefore(wrapper, h1);
+            wrapper.appendChild(h1);
+            wrapper.appendChild(btn);
+        })();
+
+        // ================= H2 导航箭头注入 =================
+        document.querySelectorAll('.slide h2').forEach(h2 => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'slide-nav-row';
+            const prev = document.createElement('button');
+            prev.className = 'slide-nav-btn';
+            prev.textContent = '❮';
+            prev.addEventListener('click', e => { e.stopPropagation(); handleScroll(-1); });
+            const next = document.createElement('button');
+            next.className = 'slide-nav-btn';
+            next.textContent = '❯';
+            next.addEventListener('click', e => { e.stopPropagation(); handleScroll(1); });
+            h2.parentNode.insertBefore(wrapper, h2);
+            wrapper.appendChild(prev);
+            wrapper.appendChild(h2);
+            wrapper.appendChild(next);
+        });
+
+        // 初始设置居中 (placed after all const declarations to avoid TDZ)
+        updateUI();
+    </script>
+</body>
+</html>
