@@ -81,7 +81,7 @@
 
         /* 时序块 (对应每一个PPT) */
         .seq-block {
-            position: relative; padding: 20px 0; opacity: 0.25; filter: grayscale(0.8);
+            position: relative; padding: 8px 0; opacity: 0.25; filter: grayscale(0.8);
             transition: all 0.5s ease; width: 100%;
         }
         .seq-block.active {
@@ -90,12 +90,12 @@
 
         .seq-time-label {
             width: 100%; text-align: center; font-size: 0.9rem; font-weight: bold;
-            color: #8b949e; margin-bottom: 15px; position: relative; z-index: 10;
+            color: #8b949e; margin-bottom: 6px; position: relative; z-index: 10;
         }
         .seq-block.active .seq-time-label { color: var(--highlight); }
 
         /* 交互连线行 */
-        .seq-row { position: relative; height: 60px; width: 100%; }
+        .seq-row { position: relative; height: 42px; width: 100%; }
 
         /* 交互箭头 */
         .arrow {
@@ -537,10 +537,7 @@
                 <div class="seq-block active" id="seq-0">
                     <div class="seq-time-label">📋 2025.5.31天津碎片战复盘</div>
                     <div class="seq-row">
-                        <div class="self-event c-official" style="left: 50%;">2025天津<br>碎片战</div>
-                    </div>
-                    <div class="seq-row">
-                        <div class="arrow rtl c-green" style="left: 10%; width: 80%;"><div class="arrow-label">绿军1:0蓝军（5月31日）</div></div>
+                        <div class="arrow c-blue" style="left: 10%; width: 80%;"><div class="arrow-label">时间线初始化</div></div>
                     </div>
                 </div>
 
@@ -553,10 +550,13 @@
                         <div class="arrow ltr c-blue" style="left: 10%; width: 40%;"><div class="arrow-label">参与反馈调整初始Po点</div></div>
                     </div>
                     <div class="seq-row">
-                        <div class="self-event c-official" style="left: 50%;">响应反馈<br>移Po至「龟」</div>
+                        <div class="self-event c-official" style="left: 50%;">响应反馈，移Po至「龟」</div>
                     </div>
                     <div class="seq-row">
-                        <div class="self-event c-green" style="left: 90%;">连夜驱车利用翡翠岛<br>建挡线三角</div>
+                        <div class="self-event c-green" style="left: 90%;">@StarTrailer利用翡翠岛<br>建Block</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">@evaniik<br>炸毁「地球仪」</div>
                     </div>
                 </div>
 
@@ -566,10 +566,13 @@
                         <div class="arrow rtl c-greenair" style="left: 10%; width: 60%;"><div class="arrow-label">✈ @Nezha5 炸掉Bai Fei广告牌</div></div>
                     </div>
                     <div class="seq-row">
-                        <div class="arrow ltr c-blueair" style="left: 30%; width: 40%;"><div class="arrow-label">4架偏蓝飞机轰炸翡翠岛/休息亭</div></div>
+                        <div class="arrow ltr c-blueair" style="left: 30%; width: 60%;"><div class="arrow-label">4架偏蓝飞机轰炸翡翠岛/休息亭</div></div>
                     </div>
                     <div class="seq-row">
-                        <div class="self-event c-blue" style="left: 10%;">探查确认<br>翡翠岛为禁区</div>
+                        <div class="self-event c-green" style="left: 90%;">14:26 @lotusy0810<br>重建绿军挡线</div>
+                    </div>
+                    <div class="seq-row">
+                        <div class="self-event c-blueair" style="left: 30%;">15:44 @Ai8899<br>建Block封双方</div>
                     </div>
                     <div class="seq-row">
                         <div class="arrow rtl c-green" style="left: 10%; width: 80%;"><div class="arrow-label">发文《开飞机很丢人》指向北京蓝军</div></div>
@@ -579,6 +582,9 @@
                 <div class="seq-block" id="seq-3">
                     <div class="seq-time-label">🔴 D-1 · 战前拉锯（5月30日）</div>
                     <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">12:57 @lotusy0810<br>重建西向封堵挡线</div>
+                    </div>
+                    <div class="seq-row">
                         <div class="self-event c-green" style="left: 90%;">@MurphyQHD<br>重占翡翠岛</div>
                     </div>
                     <div class="seq-row">
@@ -587,10 +593,16 @@
                     <div class="seq-row">
                         <div class="arrow ltr c-blue" style="left: 10%; width: 40%;"><div class="arrow-label">@AzureCandy 封住翡翠岛北侧</div></div>
                     </div>
+                    <div class="seq-row">
+                        <div class="self-event c-green" style="left: 90%;">绿葱日报<br>TG频道成立</div>
+                    </div>
                 </div>
 
                 <div class="seq-block" id="seq-4">
                     <div class="seq-time-label">🔴 D0 · 回旋镖回转时刻（5月31日 上午）</div>
+                    <div class="seq-row">
+                        <div class="arrow ltr c-blue" style="left: 10%; width: 80%;"><div class="arrow-label">9点开始控毒「龟」；10点绿军未夺下</div></div>
+                    </div>
                     <div class="seq-row">
                         <div class="self-event c-green" style="left: 90%;">@WilliamsLi<br>11:58攻下「龟」</div>
                     </div>
